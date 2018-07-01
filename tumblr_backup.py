@@ -69,6 +69,7 @@ imghdr.tests.append(test_jpg)
 # variable directory names, will be set in TumblrBackup.backup()
 save_folder = ''
 media_folder = ''
+youtube_dl_urls = {}
 
 # constant names
 root_folder = os.getcwdu()
@@ -431,7 +432,8 @@ class TumblrBackup:
         base = get_api_url(account)
 
         # make sure there are folders to save in
-        global save_folder, media_folder, post_ext, post_dir, save_dir, have_custom_css
+        global save_folder, media_folder, post_ext, post_dir, save_dir, have_custom_css, youtube_dl_urls
+        youtube_dl_urls = {}
         if options.blosxom:
             save_folder = root_folder
             post_ext = '.txt'
@@ -714,6 +716,8 @@ class TumblrPost:
         self.save_post()
 
     def get_youtube_url(self, youtube_url):
+        global youtube_dl_urls
+
         # determine the media file name
         filetmpl = u'%(id)s_%(uploader_id)s_%(title)s.%(ext)s'
         ydl = youtube_dl.YoutubeDL({
@@ -734,21 +738,35 @@ class TumblrPost:
             media_filename = sanitize_filename(filetmpl % result, restricted=True)
             # 360 video: https://github.com/rg3/youtube-dl/issues/15267#issuecomment-370122336
             if re.search(r"\(\d{3,4}s\)", result['format']):
+                tmpuseragent = youtube_dl.std_headers['User-Agent']
                 youtube_dl.std_headers['User-Agent'] = ''
                 result = ydl.extract_info(youtube_url, download=False)
+                youtube_dl.std_headers['User-Agent'] = tmpuseragent
                 media_filename = sanitize_filename(filetmpl % result, restricted=True)
         except:
             return ''
 
+        if youtube_url in youtube_dl_urls:
+            return youtube_dl_urls[youtube_url]
+        youtube_dl_urls[youtube_url] = u'%s/%s' % (self.media_url, split(media_filename)[1])
         # check if a file with this name already exists
         if not os.path.isfile(media_filename):
             try:
                 ydl.process_ie_result(result)
             except:
                 return ''
-        return u'%s/%s' % (self.media_url, split(media_filename)[1])
+
+        return youtube_dl_urls[youtube_url]
 
     def get_media_url(self, media_url, extension):
+        try:
+            if extension == '.mp4':
+                hq_video_url = re.sub(r'_\d+\.mp4', '.mp4', media_url)
+                if hq_video_url != media_url:
+                    urlopen(hq_video_url)
+                    media_url = hq_video_url
+        except:
+            pass
         media_filename = self.get_filename(media_url)
         media_filename = os.path.splitext(media_filename)[0] + extension
         media_filename = sanitize_filename(media_filename, is_id=True)
