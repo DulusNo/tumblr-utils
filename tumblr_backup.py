@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 # standard Python library imports
-from __future__ import with_statement
+from __future__ import with_statement, unicode_literals
 import codecs
 from collections import defaultdict
 from datetime import datetime
@@ -602,8 +602,12 @@ class TumblrPost:
             elt = get_try(elt)
             if elt:
                 if options.save_images:
-                    elt = re.sub(r'''(?i)(<img [^>]*\bsrc\s*=\s*["'])(.*?)(["'][^>]*>)''',
+                    elt = re.sub(r'''(?i)(<img[^>]*\ssrc\s*=\s*["'])(.*?)(["'][^>]*>)''',
                         self.get_inline_image, elt
+                    )
+                if options.save_video:
+                    elt = re.sub(r'''(?i)(<iframe[^>]*\ssrc\s*=\s*["'])(.*?)(["'][^>]*>)''',
+                        self.get_inline_video, elt
                     )
                 append(elt, fmt)
 
@@ -622,7 +626,7 @@ class TumblrPost:
                 o = p['original_size']
                 src = o['url']
                 if options.save_images:
-                    src = self.get_image_url(src, offset if is_photoset else 0)
+                    src = self.get_image_url(src, offset if is_photoset else 0, url)
                 append(escape(src), u'<img alt="" src="%s">')
                 if url:
                     content[-1] = u'<a href="%s">%s</a>' % (escape(url), content[-1])
@@ -646,13 +650,18 @@ class TumblrPost:
                 if post['video_type'] == 'tumblr':
                     src = self.get_media_url(post['video_url'], '.mp4')
                 elif youtube_dl:
-                    src = self.get_youtube_url(self.url)
-                    if not src:
-                        sys.stdout.write(u'Unable to download video in post #%s%-50s\n' %
+                    try:
+                        src = self.get_youtube_url(post['permalink_url'])
+                        if not src:
+                            sys.stdout.write(u'Unable to download video in post #%s%-50s\n' %
+                                (self.ident, ' ')
+                            )
+                    except:
+                        sys.stdout.write(u'No permalink_url in post #%s%-50s\n' %
                             (self.ident, ' ')
                         )
             if src:
-                append(u'<p><video controls><source src="%s" type=video/mp4>%s<br>\n<a href="%s">%s</a></video></p>' % (
+                append(u'<p><video controls width="960"><source src="%s" type=video/mp4>%s<br>\n<a href="%s">%s</a></video></p>' % (
                     src, "Your browser does not support the video element.", src, "Video file"
                 ))
             else:
@@ -709,26 +718,32 @@ class TumblrPost:
         filetmpl = u'%(id)s_%(uploader_id)s_%(title)s.%(ext)s'
         ydl = youtube_dl.YoutubeDL({
             'outtmpl': join(self.media_folder, filetmpl),
-            'quiet': True, 
+            'format': 'bestvideo[ext=webm]+bestaudio[acodec=opus]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+            'quiet': True,
             'restrictfilenames': True, 
             'noplaylist': True,
             'continuedl': True,
             'nooverwrites': True,
             'retries': 3000,		
             'fragment_retries': 3000,
-            'ignoreerrors': True
+            'ignoreerrors': True,
         })
         ydl.add_default_info_extractors()
         try:
             result = ydl.extract_info(youtube_url, download=False)
-            media_filename = sanitize_filename(filetmpl % result['entries'][0], restricted=True)
+            media_filename = sanitize_filename(filetmpl % result, restricted=True)
+            # 360 video: https://github.com/rg3/youtube-dl/issues/15267#issuecomment-370122336
+            if re.search(r"\(\d{3,4}s\)", result['format']):
+                youtube_dl.std_headers['User-Agent'] = ''
+                result = ydl.extract_info(youtube_url, download=False)
+                media_filename = sanitize_filename(filetmpl % result, restricted=True)
         except:
             return ''
 
         # check if a file with this name already exists
         if not os.path.isfile(media_filename):
             try:
-                ydl.extract_info(youtube_url, download=True)
+                ydl.process_ie_result(result)
             except:
                 return ''
         return u'%s/%s' % (self.media_url, split(media_filename)[1])
@@ -736,12 +751,13 @@ class TumblrPost:
     def get_media_url(self, media_url, extension):
         media_filename = self.get_filename(media_url)
         media_filename = os.path.splitext(media_filename)[0] + extension
+        media_filename = sanitize_filename(media_filename, is_id=True)
         saved_name = self.download_media(media_url, media_filename)
         if saved_name is not None:
             media_filename = u'%s/%s' % (self.media_url, saved_name)
         return media_filename
 
-    def get_image_url(self, image_url, offset):
+    def get_image_url(self, image_url, offset, link=''):
         """Saves an image if not saved yet. Returns the new URL or
         the original URL in case of download errors."""
 
@@ -749,6 +765,7 @@ class TumblrPost:
             if options.exif and fn.endswith('.jpg'):
                 add_exif(fn, set(self.tags))
 
+        image_url = self.maxsize_image_url(image_url, link)
         image_filename = self.get_filename(image_url, '_o%s' % offset if offset else '')
         saved_name = self.download_media(image_url, image_filename)
         if saved_name is not None:
@@ -757,11 +774,15 @@ class TumblrPost:
         return image_url
 
     @staticmethod
-    def maxsize_image_url(image_url):
-        if ".tumblr.com/" not in image_url or image_url.endswith('.gif'):
-            return image_url
-        # change the image resolution to 1280
-        return re.sub(r'_\d{2,4}(\.\w+)$', r'_1280\1', image_url)
+    def maxsize_image_url(image_url, link=''):
+        med_url = re.sub(r'_\d{2,4}(\.\w+)$', r'_1280\1', image_url)
+        max_url = re.sub(r'^(https?:\/\/)(\d+\.media\.tumblr\.com)(\/[0-9a-f]{32}\/tumblr_(?:inline_)?[0-9A-Za-z]+_(?:r\d+_)?)(\d+)(\.[a-z]+)$', r'\1s3.amazonaws.com/data.tumblr.com\3raw\5', med_url)
+        if max_url.endswith('.gif') or re.match(r'(?:https?://(?:www\.)?)?instagr(?:\.am|am\.com)(?:/p/[^/?#&]+)', link):
+            try:
+                urlopen(max_url)
+            except:
+                return med_url
+        return max_url
 
     def get_inline_image(self, match):
         """Saves an inline image if not saved yet. Returns the new <img> tag or
@@ -782,6 +803,23 @@ class TumblrPost:
         return u'%s%s/%s%s' % (match.group(1), self.media_url,
             saved_name, match.group(3)
         )
+
+    def get_inline_video(self, match):
+        """Saves an inline video if not saved yet. Returns the new <video> tag or
+        the original one in case of download errors."""
+
+        video_url = match.group(2)
+        if video_url.startswith('//'):
+            video_url = 'http:' + video_url
+        src = self.get_youtube_url(video_url)
+        if not src:
+            sys.stdout.write(u'Unable to download inline thing in post #%s%-50s\n' %
+                (self.ident, ' ')
+            )
+            return u'%s%s%s' % (match.group(1), video_url, match.group(3))
+
+        return u'<p><video controls width="960"><source src="%s" type=video/mp4>%s<br>\n<a href="%s">%s</a></video></p>' % (
+                    src, "Your browser does not support the video element.", src, "Video file")
 
     def get_filename(self, url, offset=''):
         """Determine the image file name depending on options.image_names"""
