@@ -759,18 +759,18 @@ class TumblrPost:
         return youtube_dl_urls[youtube_url]
 
     def get_media_url(self, media_url, extension):
-        try:
-            if extension == '.mp4':
-                hq_video_url = re.sub(r'_\d+\.mp4', '.mp4', media_url)
-                if hq_video_url != media_url:
-                    urlopen(hq_video_url)
-                    media_url = hq_video_url
-        except:
-            pass
-        media_filename = self.get_filename(media_url)
-        media_filename = os.path.splitext(media_filename)[0] + extension
-        media_filename = sanitize_filename(media_filename, is_id=True)
-        saved_name = self.download_media(media_url, media_filename)
+        def dl(url, ext):
+            media_f = self.get_filename(url)
+            media_f = os.path.splitext(media_f)[0] + ext
+            media_f = sanitize_filename(media_f, is_id=True)
+            return self.download_media(url, media_f)
+        media_filename = ''
+        if extension == '.mp4':
+            lq_video_url = media_url
+            media_url = re.sub(r'_\d+\.mp4', '.mp4', media_url)
+        saved_name = dl(media_url, extension)
+        if extension == '.mp4' and saved_name is None:
+            saved_name = dl(lq_video_url, extension)
         if saved_name is not None:
             media_filename = u'%s/%s' % (self.media_url, saved_name)
         return media_filename
