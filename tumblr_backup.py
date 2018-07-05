@@ -735,14 +735,13 @@ class TumblrPost:
         ydl.add_default_info_extractors()
         try:
             result = ydl.extract_info(youtube_url, download=False)
-            media_filename = sanitize_filename(filetmpl % result, restricted=True)
             # 360 video: https://github.com/rg3/youtube-dl/issues/15267#issuecomment-370122336
             if re.search(r"\(\d{3,4}s\)", result['format']):
                 tmpuseragent = youtube_dl.std_headers['User-Agent']
                 youtube_dl.std_headers['User-Agent'] = ''
                 result = ydl.extract_info(youtube_url, download=False)
                 youtube_dl.std_headers['User-Agent'] = tmpuseragent
-                media_filename = sanitize_filename(filetmpl % result, restricted=True)
+            media_filename = split(ydl.prepare_filename(result))[1]
         except:
             return ''
 
@@ -829,6 +828,10 @@ class TumblrPost:
         video_url = match.group(2)
         if video_url.startswith('//'):
             video_url = 'http:' + video_url
+
+        if 'scribd' in video_url:
+            return u'%s%s%s' % (match.group(1), video_url, match.group(3))
+
         src = self.get_youtube_url(video_url)
         if not src:
             sys.stdout.write(u'Unable to download inline thing in post #%s%-50s\n' %
@@ -836,6 +839,9 @@ class TumblrPost:
             )
             return u'%s%s%s' % (match.group(1), video_url, match.group(3))
 
+        if splitext(src)[1] in {'.mp3', '.wav', '.opus', '.ogg', '.m4a', '.aac'}:
+            return u'<p><audio controls><source src="%s" type=audio/mpeg>%s<br>\n<a href="%s">%s</a></audio></p>' % (
+                    src, "Your browser does not support the audio element.", src, "Audio file")
         return u'<p><video controls width="960"><source src="%s" type=video/mp4>%s<br>\n<a href="%s">%s</a></video></p>' % (
                     src, "Your browser does not support the video element.", src, "Video file")
 
