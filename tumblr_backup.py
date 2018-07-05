@@ -628,7 +628,7 @@ class TumblrPost:
                 o = p['original_size']
                 src = o['url']
                 if options.save_images:
-                    src = self.get_image_url(src, offset if is_photoset else 0, url)
+                    src = self.get_image_url(src, offset if is_photoset else 0)
                 append(escape(src), u'<img alt="" src="%s">')
                 if url:
                     content[-1] = u'<a href="%s">%s</a>' % (escape(url), content[-1])
@@ -774,7 +774,7 @@ class TumblrPost:
             media_filename = u'%s/%s' % (self.media_url, saved_name)
         return media_filename
 
-    def get_image_url(self, image_url, offset, link=''):
+    def get_image_url(self, image_url, offset):
         """Saves an image if not saved yet. Returns the new URL or
         the original URL in case of download errors."""
 
@@ -782,24 +782,22 @@ class TumblrPost:
             if options.exif and fn.endswith('.jpg'):
                 add_exif(fn, set(self.tags))
 
-        image_url = self.maxsize_image_url(image_url, link)
-        image_filename = self.get_filename(image_url, '_o%s' % offset if offset else '')
-        saved_name = self.download_media(image_url, image_filename)
-        if saved_name is not None:
-            _addexif(join(self.media_folder, saved_name))
-            image_url = u'%s/%s' % (self.media_url, saved_name)
+        for image_url in self.maxsize_image_url(image_url):
+            image_filename = self.get_filename(image_url, '_o%s' % offset if offset else '')
+            saved_name = self.download_media(image_url, image_filename)
+            if saved_name is not None:
+                _addexif(join(self.media_folder, saved_name))
+                image_url = u'%s/%s' % (self.media_url, saved_name)
+                break
         return image_url
 
     @staticmethod
-    def maxsize_image_url(image_url, link=''):
+    def maxsize_image_url(image_url):
         med_url = re.sub(r'_\d{2,4}(\.\w+)$', r'_1280\1', image_url)
         max_url = re.sub(r'^(https?:\/\/)(\d+\.media\.tumblr\.com)(\/[0-9a-f]{32}\/tumblr_(?:inline_)?[0-9A-Za-z]+_(?:r\d+_)?)(\d+)(\.[a-z]+)$', r'\1s3.amazonaws.com/data.tumblr.com\3raw\5', med_url)
-        if max_url.endswith('.gif') or re.match(r'(?:https?://(?:www\.)?)?instagr(?:\.am|am\.com)(?:/p/[^/?#&]+)', link):
-            try:
-                urlopen(max_url)
-            except:
-                return med_url
-        return max_url
+        if max_url == med_url:
+            return {max_url}
+        return max_url, med_url
 
     def get_inline_image(self, match):
         """Saves an inline image if not saved yet. Returns the new <img> tag or
@@ -808,13 +806,15 @@ class TumblrPost:
         image_url = match.group(2)
         if image_url.startswith('//'):
             image_url = 'http:' + image_url
-        image_url = self.maxsize_image_url(image_url)
-        path = urlparse.urlparse(image_url).path
-        image_filename = path.split('/')[-1]
-        if not image_filename or not image_url.startswith('http'):
-            return match.group(0)
+        for image_url in self.maxsize_image_url(image_url):
+            path = urlparse.urlparse(image_url).path
+            image_filename = path.split('/')[-1]
+            if not image_filename or not image_url.startswith('http'):
+                return match.group(0)
+            saved_name = self.download_media(image_url, image_filename)
+            if saved_name is not None:
+                break
 
-        saved_name = self.download_media(image_url, image_filename)
         if saved_name is None:
             return match.group(0)
         return u'%s%s/%s%s' % (match.group(1), self.media_url,
